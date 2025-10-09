@@ -7,7 +7,7 @@ pipeline {
     environment {
         // ใช้ค่าเป็น "credentialsId" ของ Jenkins โดยตรงสำหรับ docker.withRegistry
         DOCKER_HUB_CREDENTIALS_ID = 'dockerhub-cred'
-        DOCKER_REPO = "iamsamitdev/express-docker-app"
+        DOCKER_REPO = "jew123phavit/express-docker-app"
         APP_NAME = "express-docker-app"
     }
 
@@ -22,57 +22,63 @@ pipeline {
             }
         }
 
-        // Stage 2: ติดตั้ง dependencies และรันเทสต์ (รองรับทุก Platform)
+        // Stage 2: Check and install Docker if needed
+        stage('Setup Environment') {
+            steps {
+                script {
+                    def isWindows = isUnix() ? false : true
+                    
+                    // Check if Docker is installed
+                    def hasDocker = false
+                    try {
+                        if (isWindows) {
+                            bat 'docker --version'
+                        } else {
+                            sh 'docker --version'
+                        }
+                        hasDocker = true
+                        echo "Docker is already installed"
+                    } catch (Exception e) {
+                        echo "Docker not found, attempting to install..."
+                        if (!isWindows) {
+                            sh '''
+                                sudo apt-get update
+                                sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+                                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+                                sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+                                sudo apt-get update
+                                sudo apt-get install -y docker-ce
+                                sudo usermod -aG docker jenkins
+                            '''
+                        } else {
+                            error "Please install Docker manually on Windows"
+                        }
+                    }
+                }
+            }
+        }
+
+        // Stage 3: Install dependencies and run tests
         stage('Install & Test') {
             steps {
                 script {
-                    // ตรวจสอบว่ามี Node.js บน host หรือไม่
-                    def hasNodeJS = false
                     def isWindows = isUnix() ? false : true
                     
-                    try {
-                        if (isWindows) {
-                            bat 'node --version && npm --version'
-                        } else {
-                            sh 'node --version && npm --version'
-                        }
-                        hasNodeJS = true
-                        echo "Using Node.js installed on ${isWindows ? 'Windows' : 'Unix'}"
-                    } catch (Exception e) {
-                        echo "Node.js not found on host, using Docker"
-                        hasNodeJS = false
-                    }
-                    
-                    if (hasNodeJS) {
-                        // ใช้ Node.js บน host
-                        if (isWindows) {
-                            bat '''
-                                npm install
-                                npm test
-                            '''
-                        } else {
-                            sh '''
-                                npm install
-                                npm test
-                            '''
-                        }
+                    echo "Running tests using Docker..."
+                    if (isWindows) {
+                        bat '''
+                            docker run --rm ^
+                            -v "%cd%":/workspace ^
+                            -w /workspace ^
+                            node:22-alpine sh -c "npm install && npm test"
+                        '''
                     } else {
-                        // ใช้ Docker run command (รองรับทุก platform)
-                        if (isWindows) {
-                            bat '''
-                                docker run --rm ^
-                                -v "%cd%":/workspace ^
-                                -w /workspace ^
-                                node:22-alpine sh -c "npm install && npm test"
-                            '''
-                        } else {
-                            sh '''
-                                docker run --rm \\
-                                -v "$(pwd)":/workspace \\
-                                -w /workspace \\
-                                node:22-alpine sh -c "npm install && npm test"
-                            '''
-                        }
+                        sh '''
+                            docker run --rm \\
+                            -v "$(pwd)":/workspace \\
+                            -w /workspace \\
+                            node:22-alpine sh -c "npm install && npm test"
+                        '''
                     }
                 }
             }
