@@ -1,7 +1,13 @@
 pipeline {
   
-    // ใช้ any agent เพื่อหลีกเลี่ยงปัญหา Docker path mounting บน Windows
-    agent any
+    // Use a Docker agent that has git and docker client installed.
+    // This allows the pipeline to use docker commands by connecting to the host's Docker daemon.
+    agent {
+        docker {
+            image 'docker:24.0-git'
+            args '-v /var/run/docker.sock:/var/run/docker.sock'
+        }
+    }
 
     // กำหนด environment variables
     environment {
@@ -22,64 +28,18 @@ pipeline {
             }
         }
 
-        // Stage 2: Check and install Docker if needed
-        stage('Setup Environment') {
-            steps {
-                script {
-                    def isWindows = isUnix() ? false : true
-                    
-                    // Check if Docker is installed
-                    def hasDocker = false
-                    try {
-                        if (isWindows) {
-                            bat 'docker --version'
-                        } else {
-                            sh 'docker --version'
-                        }
-                        hasDocker = true
-                        echo "Docker is already installed"
-                    } catch (Exception e) {
-                        echo "Docker not found, attempting to install..."
-                        if (!isWindows) {
-                            sh '''
-                                sudo apt-get update
-                                sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-                                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-                                sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-                                sudo apt-get update
-                                sudo apt-get install -y docker-ce
-                                sudo usermod -aG docker jenkins
-                            '''
-                        } else {
-                            error "Please install Docker manually on Windows"
-                        }
-                    }
-                }
-            }
-        }
-
-        // Stage 3: Install dependencies and run tests
+        // Stage 2: ติดตั้ง dependencies และรันเทสต์
         stage('Install & Test') {
             steps {
                 script {
-                    def isWindows = isUnix() ? false : true
-                    
-                    echo "Running tests using Docker..."
-                    if (isWindows) {
-                        bat '''
-                            docker run --rm ^
-                            -v "%cd%":/workspace ^
-                            -w /workspace ^
-                            node:22-alpine sh -c "npm install && npm test"
-                        '''
-                    } else {
-                        sh '''
-                            docker run --rm \\
-                            -v "$(pwd)":/workspace \\
-                            -w /workspace \\
-                            node:22-alpine sh -c "npm install && npm test"
-                        '''
-                    }
+                    // The agent is a Linux container, so we directly use the 'sh' step.
+                    echo "Using Docker to run tests..."
+                    sh '''
+                        docker run --rm \\
+                        -v "$(pwd)":/workspace \\
+                        -w /workspace \\
+                        node:22-alpine sh -c "npm install && npm test"
+                    '''
                 }
             }
         }
@@ -113,83 +73,31 @@ pipeline {
         stage('Cleanup Docker') {
             steps {
                 script {
-                    def isWindows = isUnix() ? false : true
                     echo "Cleaning up local Docker images/cache on agent..."
-                    if (isWindows) {
-                        bat """
-                            docker image rm -f ${DOCKER_REPO}:${BUILD_NUMBER} || echo ignore
-                            docker image rm -f ${DOCKER_REPO}:latest || echo ignore
-                            docker image prune -af -f
-                            docker builder prune -af -f
-                        """
-                    } else {
-                        sh """
-                            docker image rm -f ${DOCKER_REPO}:${BUILD_NUMBER} || true
-                            docker image rm -f ${DOCKER_REPO}:latest || true
-                            docker image prune -af -f
-                            docker builder prune -af -f
-                        """
-                    }
+                    sh """
+                        docker image rm -f ${DOCKER_REPO}:${BUILD_NUMBER} || true
+                        docker image rm -f ${DOCKER_REPO}:latest || true
+                        docker image prune -af -f
+                        docker builder prune -af -f
+                    """
                 }
             }
         }
 
-        // Stage 6: Deploy ไปยังเครื่อง local (รองรับทุก Platform)
+        // Stage 6: Deploy ไปยังเครื่อง local
         stage('Deploy Local') {
             steps {
                 script {
-                    def isWindows = isUnix() ? false : true
                     echo "Deploying container ${APP_NAME} from latest image..."
-                    if (isWindows) {
-                        bat """
-                            docker pull ${DOCKER_REPO}:latest
-                            docker stop ${APP_NAME} || echo ignore
-                            docker rm ${APP_NAME} || echo ignore
-                            docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest
-                            docker ps --filter name=${APP_NAME} --format \"table {{.Names}}\t{{.Image}}\t{{.Status}}\"
-                        """
-                    } else {
-                        sh """
-                            docker pull ${DOCKER_REPO}:latest
-                            docker stop ${APP_NAME} || true
-                            docker rm ${APP_NAME} || true
-                            docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest
-                            docker ps --filter name=${APP_NAME} --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
-                        """
-                    }
+                    sh """
+                        docker pull ${DOCKER_REPO}:latest
+                        docker stop ${APP_NAME} || true
+                        docker rm ${APP_NAME} || true
+                        docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest
+                        docker ps --filter name=${APP_NAME} --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+                    """
                 }
             }
         }
-
-        // Stage 7: Deploy ไปยังเครื่อง remote server (ถ้ามี)
-        // ต้องตั้งค่า SSH Key และอนุญาตให้ Jenkins เข้าถึง server
-        // stage('Deploy to Server') {
-        //     steps {
-        //         script {
-        //             def isWindows = isUnix() ? false : true
-        //             echo "Deploying to remote server..."
-        //             if (isWindows) {
-        //                 bat """
-        //                     ssh -o StrictHostKeyChecking=no user@your-server-ip \\
-        //                     'docker pull ${DOCKER_REPO}:latest && \\
-        //                     docker stop ${APP_NAME} || echo ignore && \\
-        //                     docker rm ${APP_NAME} || echo ignore && \\
-        //                     docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest && \\
-        //                     docker ps --filter name=${APP_NAME} --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"'
-        //                 """
-        //             } else {
-        //                 sh """
-        //                     ssh -o StrictHostKeyChecking=no user@your-server-ip \\
-        //                     'docker pull ${DOCKER_REPO}:latest && \\
-        //                     docker stop ${APP_NAME} || true && \\
-        //                     docker rm ${APP_NAME} || true && \\
-        //                     docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest && \\
-        //                     docker ps --filter name=${APP_NAME} --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"'
-        //                 """
-        //             }
-        //         }
-        //     }
-        // }
-
     }
 }
