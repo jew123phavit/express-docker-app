@@ -32,7 +32,7 @@ pipeline {
                 // รันคำสั่ง npm ภายใน container ของ node:22-alpine
                 sh '''
                     docker run --rm \\
-                    -v "$(pwd)":/app \\
+                    -v "${WORKSPACE}":/app \\
                     -w /app \\
                     node:22-alpine sh -c "npm install && npm test"
                 '''
