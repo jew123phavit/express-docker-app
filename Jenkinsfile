@@ -109,7 +109,7 @@ pipeline {
                     docker pull ${DOCKER_REPO}:latest
                     docker stop ${APP_NAME} || true
                     docker rm ${APP_NAME} || true
-                    docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest
+                    docker run -d --name ${APP_NAME} -p 3300:3300 ${DOCKER_REPO}:latest
                     docker ps --filter name=${APP_NAME} --format "table {{.Names}}\\t{{.Image}}\\t{{.Status}}"
                 """
             }
