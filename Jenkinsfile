@@ -1,13 +1,7 @@
 pipeline {
   
-    // Use a Docker agent that has git and docker client installed.
-    // This allows the pipeline to use docker commands by connecting to the host's Docker daemon.
-    agent {
-        docker {
-            image 'docker:24.0-git'
-            args '-v /var/run/docker.sock:/var/run/docker.sock'
-        }
-    }
+    // ใช้ any agent เพื่อหลีกเลี่ยงปัญหา Docker path mounting บน Windows
+    agent any
 
     // กำหนด environment variables
     environment {
@@ -28,18 +22,58 @@ pipeline {
             }
         }
 
-        // Stage 2: ติดตั้ง dependencies และรันเทสต์
+        // Stage 2: ติดตั้ง dependencies และรันเทสต์ (รองรับทุก Platform)
         stage('Install & Test') {
             steps {
                 script {
-                    // The agent is a Linux container, so we directly use the 'sh' step.
-                    echo "Using Docker to run tests..."
-                    sh '''
-                        docker run --rm \\
-                        -v "$(pwd)":/workspace \\
-                        -w /workspace \\
-                        node:22-alpine sh -c "npm install && npm test"
-                    '''
+                    // ตรวจสอบว่ามี Node.js บน host หรือไม่
+                    def hasNodeJS = false
+                    def isWindows = isUnix() ? false : true
+                    
+                    try {
+                        if (isWindows) {
+                            bat 'node --version && npm --version'
+                        } else {
+                            sh 'node --version && npm --version'
+                        }
+                        hasNodeJS = true
+                        echo "Using Node.js installed on ${isWindows ? 'Windows' : 'Unix'}"
+                    } catch (Exception e) {
+                        echo "Node.js not found on host, using Docker"
+                        hasNodeJS = false
+                    }
+                    
+                    if (hasNodeJS) {
+                        // ใช้ Node.js บน host
+                        if (isWindows) {
+                            bat '''
+                                npm install
+                                npm test
+                            '''
+                        } else {
+                            sh '''
+                                npm install
+                                npm test
+                            '''
+                        }
+                    } else {
+                        // ใช้ Docker run command (รองรับทุก platform)
+                        if (isWindows) {
+                            bat '''
+                                docker run --rm ^
+                                -v "%cd%":/workspace ^
+                                -w /workspace ^
+                                node:22-alpine sh -c "npm install && npm test"
+                            '''
+                        } else {
+                            sh '''
+                                docker run --rm \\
+                                -v "$(pwd)":/workspace \\
+                                -w /workspace \\
+                                node:22-alpine sh -c "npm install && npm test"
+                            '''
+                        }
+                    }
                 }
             }
         }
@@ -73,31 +107,83 @@ pipeline {
         stage('Cleanup Docker') {
             steps {
                 script {
+                    def isWindows = isUnix() ? false : true
                     echo "Cleaning up local Docker images/cache on agent..."
-                    sh """
-                        docker image rm -f ${DOCKER_REPO}:${BUILD_NUMBER} || true
-                        docker image rm -f ${DOCKER_REPO}:latest || true
-                        docker image prune -af -f
-                        docker builder prune -af -f
-                    """
+                    if (isWindows) {
+                        bat """
+                            docker image rm -f ${DOCKER_REPO}:${BUILD_NUMBER} || echo ignore
+                            docker image rm -f ${DOCKER_REPO}:latest || echo ignore
+                            docker image prune -af -f
+                            docker builder prune -af -f
+                        """
+                    } else {
+                        sh """
+                            docker image rm -f ${DOCKER_REPO}:${BUILD_NUMBER} || true
+                            docker image rm -f ${DOCKER_REPO}:latest || true
+                            docker image prune -af -f
+                            docker builder prune -af -f
+                        """
+                    }
                 }
             }
         }
 
-        // Stage 6: Deploy ไปยังเครื่อง local
+        // Stage 6: Deploy ไปยังเครื่อง local (รองรับทุก Platform)
         stage('Deploy Local') {
             steps {
                 script {
+                    def isWindows = isUnix() ? false : true
                     echo "Deploying container ${APP_NAME} from latest image..."
-                    sh """
-                        docker pull ${DOCKER_REPO}:latest
-                        docker stop ${APP_NAME} || true
-                        docker rm ${APP_NAME} || true
-                        docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest
-                        docker ps --filter name=${APP_NAME} --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
-                    """
+                    if (isWindows) {
+                        bat """
+                            docker pull ${DOCKER_REPO}:latest
+                            docker stop ${APP_NAME} || echo ignore
+                            docker rm ${APP_NAME} || echo ignore
+                            docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest
+                            docker ps --filter name=${APP_NAME} --format \"table {{.Names}}\t{{.Image}}\t{{.Status}}\"
+                        """
+                    } else {
+                        sh """
+                            docker pull ${DOCKER_REPO}:latest
+                            docker stop ${APP_NAME} || true
+                            docker rm ${APP_NAME} || true
+                            docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest
+                            docker ps --filter name=${APP_NAME} --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+                        """
+                    }
                 }
             }
         }
+
+        // Stage 7: Deploy ไปยังเครื่อง remote server (ถ้ามี)
+        // ต้องตั้งค่า SSH Key และอนุญาตให้ Jenkins เข้าถึง server
+        // stage('Deploy to Server') {
+        //     steps {
+        //         script {
+        //             def isWindows = isUnix() ? false : true
+        //             echo "Deploying to remote server..."
+        //             if (isWindows) {
+        //                 bat """
+        //                     ssh -o StrictHostKeyChecking=no user@your-server-ip \\
+        //                     'docker pull ${DOCKER_REPO}:latest && \\
+        //                     docker stop ${APP_NAME} || echo ignore && \\
+        //                     docker rm ${APP_NAME} || echo ignore && \\
+        //                     docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest && \\
+        //                     docker ps --filter name=${APP_NAME} --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"'
+        //                 """
+        //             } else {
+        //                 sh """
+        //                     ssh -o StrictHostKeyChecking=no user@your-server-ip \\
+        //                     'docker pull ${DOCKER_REPO}:latest && \\
+        //                     docker stop ${APP_NAME} || true && \\
+        //                     docker rm ${APP_NAME} || true && \\
+        //                     docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest && \\
+        //                     docker ps --filter name=${APP_NAME} --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"'
+        //                 """
+        //             }
+        //         }
+        //     }
+        // }
+
     }
 }
