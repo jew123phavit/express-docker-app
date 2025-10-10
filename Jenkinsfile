@@ -20,14 +20,20 @@ pipeline {
             }
         }
 
+        // --- STAGE ที่แก้ไข ---
         stage('Install & Test') {
             steps {
+                echo "Running npm ci and tests inside a node container..."
+                // รันคำสั่ง npm ภายใน container ของ node:22-alpine
                 sh '''
-                    if [ -f package-lock.json ]; then npm ci; else npm install; fi
-                    npm test
+                    docker run --rm \\
+                    -v "$(pwd)":/app \\
+                    -w /app \\
+                    node:22-alpine sh -c "npm ci && npm test"
                 '''
             }
         }
+        // --------------------
 
         stage('Build Docker Image') {
             steps {
@@ -67,11 +73,9 @@ pipeline {
         }
     }
 
-    // --- post block ที่รวมแล้ว ---
     post {
         always {
             echo "Pipeline finished with status: ${currentBuild.currentResult}"
-            // ย้าย Cleanup มาไว้ที่นี่ เพื่อให้ทำงานเสมอไม่ว่า pipeline จะ fail หรือ success
             sh """
                 echo "Cleaning up local Docker images/cache on agent..."
                 docker image rm -f ${DOCKER_REPO}:${BUILD_NUMBER} || true
@@ -82,7 +86,6 @@ pipeline {
         }
         success {
             echo "Pipeline succeeded!"
-            // ส่ง Webhook ไป n8n เมื่อสำเร็จ
             script {
                 withCredentials([string(credentialsId: 'n8n-webhook', variable: 'N8N_WEBHOOK_URL')]) {
                     def payload = [
@@ -92,7 +95,7 @@ pipeline {
                         build    : env.BUILD_NUMBER,
                         image    : "${env.DOCKER_REPO}:latest",
                         container: env.APP_NAME,
-                        url      : 'http://localhost:3300/', // แก้ไข port ให้ตรงกับที่ deploy
+                        url      : 'http://localhost:3300/',
                         timestamp: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX")
                     ]
                     def body = groovy.json.JsonOutput.toJson(payload)
@@ -111,7 +114,6 @@ pipeline {
         }
         failure {
             echo "Pipeline failed!"
-            // ส่ง Webhook ไป n8n เมื่อล้มเหลว
             script {
                 withCredentials([string(credentialsId: 'n8n-webhook', variable: 'N8N_WEBHOOK_URL')]) {
                     def payload = [
