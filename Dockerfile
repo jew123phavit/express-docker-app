@@ -1,5 +1,18 @@
-# Build stage - สำหรับ development และ testing
-FROM node:22-alpine AS builder
+# ใช้ Official Jenkins Image เป็น Base
+FROM jenkins/jenkins:jdk21
+
+# สลับไปใช้ User root ชั่วคราวเพื่อติดตั้งโปรแกรม
+USER root
+
+# ติดตั้ง Docker CLI (วิธีที่ง่ายและครอบคลุมกว่า)
+RUN apt-get update && apt-get install -y docker.io
+
+# เพิ่ม user 'jenkins' เข้าไปใน group 'docker' ภายใน container
+# เพื่อให้มีสิทธิ์เรียกใช้ docker.sock
+RUN usermod -aG docker jenkins
+
+# สลับกลับไปใช้ User jenkins ตามเดิม
+USER jenkins
 
 # กำหนด Working Directory ภายใน Container
 WORKDIR /app
