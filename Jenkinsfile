@@ -30,10 +30,14 @@ pipeline {
         // Stage 2: ติดตั้ง dependencies และ Run test
         stage('Install & Test') {
             steps {
-                sh '''
-                    if [ -f package-lock.json ]; then npm ci; else npm install; fi
-                    npm test
-                '''
+                script {
+                    docker.image('node:22-alpine').inside {
+                        sh '''
+                            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+                            npm test
+                        '''
+                    }
+                }
             }
         }
 
