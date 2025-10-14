@@ -1,47 +1,41 @@
 pipeline {
-    // ใช้ agent ที่มีทั้ง git และ docker client
-    agent any
-
-    // (แนะนำ) ถ้า job เป็นแบบ Pipeline from SCM ให้เปิดใช้ option นี้
-    // เพื่อป้องกันการ checkout ซ้ำซ้อน
-    options { 
-        skipDefaultCheckout(true)
+    agent {
+        docker {
+            image 'docker:24.0-git'
+            args '-v /var/run/docker.sock:/var/run/docker.sock'
+        }
     }
 
-    // กำหนด environment variables
+    // --- ส่วนที่ต้องแก้ไข ---
     environment {
         DOCKER_HUB_CREDENTIALS_ID = 'dockerhub-cred'
+        // เปลี่ยน "iamsamitdev" เป็น "jew123phavit"
         DOCKER_REPO               = "jew123phavit/express-docker-app-jenkins"
         APP_NAME                  = "express-docker-app-jenkins"
     }
+    // --------------------
 
-    // กำหนด stages ของ Pipeline
     stages {
-
-        // Stage 1: ดึงโค้ดล่าสุดจาก Git
         stage('Checkout') {
             steps {
-                echo "Checking out code..."
-                cleanWs() // ล้าง workspace ให้สะอาดก่อน
+                echo "Cleaning workspace and checking out from SCM..."
+                cleanWs()
                 checkout scm
             }
         }
 
-        // Stage 2: ติดตั้ง dependencies และ Run test
         stage('Install & Test') {
             steps {
-                script {
-                    docker.image('node:22-alpine').inside {
-                        sh '''
-                            if [ -f package-lock.json ]; then npm ci; else npm install; fi
-                            npm test
-                        '''
-                    }
-                }
+                sh '''
+                    docker run --rm \\
+                    -v "${WORKSPACE}":/app \\
+                    -w /app \\
+                    node:22-alpine sh -c "npm install && npm test"
+                '''
             }
         }
 
-        // Stage 3: สร้าง Docker Image
+        // ... (stages ที่เหลือทั้งหมดเหมือนเดิม) ...
         stage('Build Docker Image') {
             steps {
                 sh """
@@ -51,7 +45,6 @@ pipeline {
             }
         }
 
-        // Stage 4: Push Image ไปยัง Docker Hub
         stage('Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(credentialsId: env.DOCKER_HUB_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
@@ -67,7 +60,6 @@ pipeline {
             }
         }
 
-        // Stage 5: Deploy ไปยังเครื่อง local
         stage('Deploy Local') {
             steps {
                 sh """
@@ -75,83 +67,29 @@ pipeline {
                     docker pull ${DOCKER_REPO}:latest
                     docker stop ${APP_NAME} || true
                     docker rm ${APP_NAME} || true
-                    docker run -d --name ${APP_NAME} -p 3000:3000 ${DOCKER_REPO}:latest
+                    docker run -d --name ${APP_NAME} -p 3300:3000 ${DOCKER_REPO}:latest
                     docker ps --filter name=${APP_NAME} --format "table {{.Names}}\\t{{.Image}}\\t{{.Status}}"
                 """
             }
         }
     }
 
-    // กำหนด post actions ที่จะรันหลัง pipeline จบ
+    // ... (ส่วน post เหมือนเดิม) ...
     post {
         always {
             echo "Pipeline finished with status: ${currentBuild.currentResult}"
-            // Cleanup Docker images เสมอ
             sh """
                 echo "Cleaning up local Docker images/cache on agent..."
                 docker image rm -f ${DOCKER_REPO}:${BUILD_NUMBER} || true
-                docker image rm -f ${DOCKER_REPO}:latest || true
-                docker image prune -af || true
-                docker builder prune -af || true
             """
         }
         success {
-            echo "Pipeline succeeded!"
-            // ส่ง notification ไป n8n เมื่อสำเร็จ
-            script {
-                withCredentials([string(credentialsId: 'n8n-webhook', variable: 'N8N_WEBHOOK_URL')]) {
-                    def payload = [
-                        project  : env.JOB_NAME,
-                        stage    : 'Deploy Local',
-                        status   : 'success',
-                        build    : env.BUILD_NUMBER,
-                        image    : "${env.DOCKER_REPO}:latest",
-                        container: env.APP_NAME,
-                        url      : 'http://localhost:3000/',
-                        timestamp: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX")
-                    ]
-                    def body = groovy.json.JsonOutput.toJson(payload)
-                    try {
-                        httpRequest(
-                            acceptType: 'APPLICATION_JSON', contentType: 'APPLICATION_JSON',
-                            httpMode: 'POST', requestBody: body,
-                            url: N8N_WEBHOOK_URL, validResponseCodes: '100:599'
-                        )
-                        echo 'n8n webhook (success) sent via httpRequest.'
-                    } catch (err) {
-                        echo "Failed to notify n8n (success): ${err}"
-                    }
-                }
-            }
+            echo "Pipeline Succeeded!"
+            // ส่ง notification
         }
         failure {
-            echo "Pipeline failed!"
-            // ส่ง notification ไป n8n เมื่อล้มเหลว
-            script {
-                withCredentials([string(credentialsId: 'n8n-webhook', variable: 'N8N_WEBHOOK_URL')]) {
-                    def payload = [
-                        project  : env.JOB_NAME,
-                        stage    : 'Pipeline',
-                        status   : 'failed',
-                        build    : env.BUILD_NUMBER,
-                        image    : 'n/a',
-                        container: 'n/a',
-                        url      : 'n/a',
-                        timestamp: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX")
-                    ]
-                    def body = groovy.json.JsonOutput.toJson(payload)
-                    try {
-                        httpRequest(
-                            acceptType: 'APPLICATION_JSON', contentType: 'APPLICATION_JSON',
-                            httpMode: 'POST', requestBody: body,
-                            url: N8N_WEBHOOK_URL, validResponseCodes: '100:599'
-                        )
-                        echo 'n8n webhook (failure) sent via httpRequest.'
-                    } catch (err) {
-                        echo "Failed to notify n8n (failure): ${err}"
-                    }
-                }
-            }
+            echo "Pipeline Failed!"
+            // ส่ง notification
         }
     }
 }
