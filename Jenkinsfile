@@ -23,15 +23,16 @@ pipeline {
                 checkout scm
             }
         }
-
         stage('Install & Test') {
             steps {
-                sh '''
-                    docker run --rm \\
-                    -v "${WORKSPACE}":/app \\
-                    -w /app \\
-                    node:22-alpine sh -c "npm install && npm test"
-                '''
+                script {
+                    docker.image('node:22-alpine').inside {
+                        sh '''
+                            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+                            npm test
+                        '''
+                    }
+                }
             }
         }
 
