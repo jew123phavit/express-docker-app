@@ -73,7 +73,7 @@ pipeline {
         // Stage 5: Deploy ไปยังเครื่อง local
         stage('Deploy Local') {
             steps {
-                ...
+                echo 'Deployment steps go here (e.g., docker-compose up, kubectl apply).'
             }
             // ส่งข้อมูลไปยัง n8n webhook 
             // เมื่อ deploy สำเร็จ
