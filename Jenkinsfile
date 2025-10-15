@@ -34,7 +34,8 @@ pipeline {
                 script {
                     docker.image('node:22-alpine').inside {
                         sh '''
-                            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+                            if [ -f package-lock.json ]; then npm ci; else npm install;
+                            fi
                             npm test
                         '''
                     }
@@ -84,7 +85,10 @@ pipeline {
                                 -p 3000:3000 \
                                 ${DOCKER_REPO}:latest
                         """
-            }
+                    }
+                }
+            } // <--- เพิ่มปิด steps
+            
             // ส่งข้อมูลไปยัง n8n webhook 
             // เมื่อ deploy สำเร็จ
             // ใช้ Jenkins HTTP Request Plugin (ต้องติดตั้งก่อน)
@@ -142,8 +146,8 @@ pipeline {
                     }
                 }
             }
-        }
-    } // <--- วงเล็บปีกกาปิดของบล็อก stages ถูกเพิ่มเข้ามาที่นี่
+        } // <--- เพิ่มปิด stage('Deploy Local')
+    } // <--- ปิด stages
     
     post { // <--- Global post block
         always {
@@ -204,4 +208,4 @@ pipeline {
             }
         }
     }
-}
+} // <--- เพิ่มปิด pipeline block
