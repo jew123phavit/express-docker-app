@@ -71,7 +71,19 @@ pipeline {
         // Stage 5: Deploy ไปยังเครื่อง local
         stage('Deploy Local') {
             steps {
-                echo 'Deployment steps go here (e.g., docker-compose up, kubectl apply).'
+                script {
+                    docker.withTool('docker') {
+                        sh """
+                            echo "Stopping and removing old container ${APP_NAME}..."
+                            docker stop ${APP_NAME} || true
+                            docker rm ${APP_NAME} || true
+                            
+                            echo "Running new container ${APP_NAME} with image ${DOCKER_REPO}:latest"
+                            docker run -d \
+                                --name ${APP_NAME} \
+                                -p 3000:3000 \
+                                ${DOCKER_REPO}:latest
+                        """
             }
             // ส่งข้อมูลไปยัง n8n webhook 
             // เมื่อ deploy สำเร็จ
