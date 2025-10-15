@@ -32,11 +32,9 @@ pipeline {
         stage('Install & Test') {
             steps {
                 script {
-                    // ใช้ Docker Pipeline plugin ในการรันคำสั่งภายใน container ที่กำหนด
                     docker.image('node:22-alpine').inside {
                         sh '''
-                            if [ -f package-lock.json ];
-                            then npm ci; else npm install; fi
+                            if [ -f package-lock.json ]; then npm ci; else npm install; fi
                             npm test
                         '''
                     }
