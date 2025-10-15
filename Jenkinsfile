@@ -73,7 +73,6 @@ pipeline {
         // Stage 5: Deploy ไปยังเครื่อง local
         stage('Deploy Local') {
     steps {
-        ...
     }
     // ส่งข้อมูลไปยัง n8n webhook เมื่อ deploy สำเร็จ
     // ใช้ Jenkins HTTP Request Plugin (ต้องติดตั้งก่อน)
